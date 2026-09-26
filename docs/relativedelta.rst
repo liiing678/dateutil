@@ -100,6 +100,17 @@ If the result falls on a day after the last one of the month, the last day of th
     >>> date(2003,5,31)+relativedelta(months=-1)
     datetime.date(2003, 4, 30)
 
+When a relative number of months or years is added to the last day of a
+month, the result is the last day of the target month, so month-end stays
+aligned to month-end and never overflows into the following month.
+
+.. doctest::
+
+    >>> date(2003,1,31)+relativedelta(months=+1)
+    datetime.date(2003, 2, 28)
+    >>> date(2003,2,28)+relativedelta(months=+1)
+    datetime.date(2003, 3, 31)
+
 .. doctest:: relativedelta
 
     >>> date(2000,2,28)+relativedelta(years=+1)
@@ -108,12 +119,12 @@ If the result falls on a day after the last one of the month, the last day of th
     datetime.date(2001, 2, 28)
 
     >>> date(1999,2,28)+relativedelta(years=+1)
-    datetime.date(2000, 2, 28)
+    datetime.date(2000, 2, 29)
     >>> date(1999,3,1)+relativedelta(years=+1)
     datetime.date(2000, 3, 1)
 
     >>> date(2001,2,28)+relativedelta(years=-1)
-    datetime.date(2000, 2, 28)
+    datetime.date(2000, 2, 29)
     >>> date(2001,3,1)+relativedelta(years=-1)
     datetime.date(2000, 3, 1)
 

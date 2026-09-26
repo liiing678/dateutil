@@ -8,6 +8,7 @@ import unittest
 
 import pytest
 
+from dateutil import tz
 from dateutil.relativedelta import relativedelta, MO, TU, WE, FR, SU
 
 
@@ -96,14 +97,14 @@ class RelativeDeltaTest(unittest.TestCase):
                          date(2001, 2, 28))
 
         self.assertEqual(date(1999, 2, 28)+relativedelta(years=+1),
-                         date(2000, 2, 28))
+                         date(2000, 2, 29))
         self.assertEqual(date(1999, 3, 1)+relativedelta(years=+1),
                          date(2000, 3, 1))
         self.assertEqual(date(1999, 3, 1)+relativedelta(years=+1),
                          date(2000, 3, 1))
 
         self.assertEqual(date(2001, 2, 28)+relativedelta(years=-1),
-                         date(2000, 2, 28))
+                         date(2000, 2, 29))
         self.assertEqual(date(2001, 3, 1)+relativedelta(years=-1),
                          date(2000, 3, 1))
 
@@ -200,10 +201,10 @@ class RelativeDeltaTest(unittest.TestCase):
                                        minutes=5, microseconds=6))
 
     def testAbsoluteAddition(self):
-        self.assertEqual(relativedelta() + relativedelta(day=0, hour=0),
-                         relativedelta(day=0, hour=0))
-        self.assertEqual(relativedelta(day=0, hour=0) + relativedelta(),
-                         relativedelta(day=0, hour=0))
+        self.assertEqual(relativedelta() + relativedelta(day=1, hour=0),
+                         relativedelta(day=1, hour=0))
+        self.assertEqual(relativedelta(day=1, hour=0) + relativedelta(),
+                         relativedelta(day=1, hour=0))
 
     def testAdditionToDatetime(self):
         self.assertEqual(datetime(2000, 1, 1) + relativedelta(days=1),
@@ -677,8 +678,8 @@ class RelativeDeltaTest(unittest.TestCase):
             date(2021, 2, 28),
             date(2021, 2, 28),
             date(2021, 2, 28),
-            date(2021, 3, 28),
-            date(2021, 5, 30),
+            date(2021, 3, 31),
+            date(2021, 5, 31),
             date(2021, 6, 30),
         ]
 
@@ -706,11 +707,98 @@ class RelativeDeltaTest(unittest.TestCase):
             date(2021, 5, 31) - relativedelta(months=1),
             date(2021, 6, 30) - relativedelta(months=1),
         ] == [
-            date(2021, 1, 28),
+            date(2021, 1, 31),
             date(2021, 2, 28),
             date(2021, 4, 30),
-            date(2021, 5, 30),
+            date(2021, 5, 31),
         ]
+
+    def testMonthEndSticksToMonthEnd(self):
+        # A reminder on the last day of the month keeps firing on the last
+        # day of each following month instead of drifting off month-end.
+        dt = date(2021, 1, 31)
+        for want in [date(2021, 2, 28), date(2021, 3, 31),
+                     date(2021, 4, 30), date(2021, 5, 31)]:
+            dt = dt + relativedelta(months=1)
+            self.assertEqual(dt, want)
+
+    def testMonthEndSticksToMonthEndLeapYear(self):
+        self.assertEqual(date(2020, 2, 29) + relativedelta(years=1),
+                         date(2021, 2, 28))
+        self.assertEqual(date(2020, 2, 29) + relativedelta(years=4),
+                         date(2024, 2, 29))
+        self.assertEqual(date(2021, 2, 28) + relativedelta(years=1),
+                         date(2022, 2, 28))
+
+    def testMonthEndStickyOnlyFromMonthEnd(self):
+        # Dates that are not the last day of their month keep the
+        # historical clamping behavior.
+        self.assertEqual(date(2021, 1, 30) + relativedelta(months=1),
+                         date(2021, 2, 28))
+        self.assertEqual(date(2021, 2, 27) + relativedelta(months=1),
+                         date(2021, 3, 27))
+
+    def testMonthEndStickyAbsoluteDayWins(self):
+        # An explicit absolute day overrides month-end alignment.
+        self.assertEqual(date(2021, 1, 31) + relativedelta(months=1, day=15),
+                         date(2021, 2, 15))
+
+    def testInvalidAbsoluteValuesRaise(self):
+        for kwargs in [
+                {"year": 0}, {"year": 10000},
+                {"month": 0}, {"month": 13},
+                {"day": 0}, {"day": 32},
+                {"hour": 24}, {"hour": -1},
+                {"minute": 60}, {"minute": -1},
+                {"second": 60}, {"second": -1},
+                {"microsecond": 1000000}, {"microsecond": -1},
+        ]:
+            with self.assertRaises(ValueError, msg=repr(kwargs)):
+                relativedelta(**kwargs)
+
+    def testInvalidNonLeapYearDay(self):
+        with self.assertRaises(ValueError):
+            relativedelta(nlyearday=367)
+        with self.assertRaises(ValueError):
+            relativedelta(nlyearday=0)
+        with self.assertRaises(ValueError):
+            relativedelta(yearday=0)
+
+    def testDSTOffsetChangeKeepsWallClock(self):
+        NYC = tz.gettz('America/New_York')
+
+        # Spring forward: 2021-03-14 02:00 EST -> 03:00 EDT
+        result = datetime(2021, 3, 13, 9, 30, tzinfo=NYC) + \
+            relativedelta(days=1)
+        self.assertEqual(result.replace(tzinfo=None),
+                         datetime(2021, 3, 14, 9, 30))
+        self.assertEqual(result.utcoffset(), timedelta(hours=-4))
+
+        # Fall back: 2021-11-07 02:00 EDT -> 01:00 EST
+        result = datetime(2021, 11, 6, 9, 30, tzinfo=NYC) + \
+            relativedelta(days=1)
+        self.assertEqual(result.replace(tzinfo=None),
+                         datetime(2021, 11, 7, 9, 30))
+        self.assertEqual(result.utcoffset(), timedelta(hours=-5))
+
+    def testDSTMonthArithmeticKeepsWallClock(self):
+        NYC = tz.gettz('America/New_York')
+
+        result = datetime(2021, 10, 31, 9, 0, tzinfo=NYC) + \
+            relativedelta(months=1)
+        self.assertEqual(result.replace(tzinfo=None),
+                         datetime(2021, 11, 30, 9, 0))
+        self.assertEqual(result.utcoffset(), timedelta(hours=-5))
+
+    def testDSTImaginaryResultRaises(self):
+        NYC = tz.gettz('America/New_York')
+
+        # 2021-03-14 02:30 does not exist in America/New_York; an
+        # imaginary result is invalid and must not be approximated.
+        with self.assertRaises(ValueError):
+            datetime(2021, 3, 13, 2, 30, tzinfo=NYC) + relativedelta(days=1)
+        with self.assertRaises(ValueError):
+            datetime(2021, 3, 14, 1, 30, tzinfo=NYC) + relativedelta(hours=1)
 
 class RelativeDeltaWeeksPropertyGetterTest(unittest.TestCase):
     """Test the weeks property getter"""

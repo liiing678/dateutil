@@ -42,6 +42,11 @@ class relativedelta(object):
             operation, but rather REPLACES the corresponding value in the
             original datetime with the value(s) in relativedelta.
 
+            Absolute values must be valid on their own (e.g. ``month`` must
+            be in 1..12 and ``day`` in 1..31); invalid values raise
+            :exc:`ValueError` immediately rather than being silently
+            ignored or clamped to an approximate value.
+
         years, months, weeks, days, hours, minutes, seconds, microseconds:
             Relative information, may be negative (argument is plural); adding
             or subtracting a relativedelta with relative information performs
@@ -85,6 +90,20 @@ class relativedelta(object):
     7. Microseconds
 
     Finally, weekday is applied, using the rule described above.
+
+    Two additional guarantees are made when the delta is applied to a
+    date or datetime:
+
+    * When a relative number of months or years is added to the last day
+      of a month, the result is the last day of the target month, so
+      month-end stays aligned to month-end and never overflows into the
+      following month.
+
+    * Arithmetic on timezone-aware datetimes preserves the wall clock
+      time across UTC offset changes (e.g. DST transitions). If the
+      resulting wall time does not exist in the datetime's time zone, a
+      :exc:`ValueError` is raised instead of returning an approximate
+      value.
 
     For example
 
@@ -200,10 +219,37 @@ class relativedelta(object):
                      "This is not a well-defined condition and will raise " +
                      "errors in future versions.", DeprecationWarning)
 
+            # Absolute information must be a valid calendar/clock value on
+            # its own. Invalid combinations (e.g. month=0 or day=32) raise
+            # immediately rather than being silently ignored or clamped to
+            # an approximate value. Non-integer values are left to the
+            # deprecation path above.
+            for attr, value, min_value, max_value in (
+                    ("year", year, 1, 9999),
+                    ("month", month, 1, 12),
+                    ("day", day, 1, 31),
+                    ("hour", hour, 0, 23),
+                    ("minute", minute, 0, 59),
+                    ("second", second, 0, 59),
+                    ("microsecond", microsecond, 0, 999999)):
+                if (value is not None and value == int(value)
+                        and not min_value <= value <= max_value):
+                    raise ValueError(
+                        "{attr} must be in {min_value}..{max_value}, "
+                        "got {value!r}".format(attr=attr,
+                                               min_value=min_value,
+                                               max_value=max_value,
+                                               value=value))
+
             if isinstance(weekday, integer_types):
                 self.weekday = weekdays[weekday]
             else:
                 self.weekday = weekday
+
+            if yearday is not None and not 1 <= yearday <= 366:
+                raise ValueError("invalid year day (%d)" % yearday)
+            if nlyearday is not None and not 1 <= nlyearday <= 366:
+                raise ValueError("invalid year day (%d)" % nlyearday)
 
             yday = 0
             if nlyearday:
@@ -374,8 +420,17 @@ class relativedelta(object):
             elif month < 1:
                 year -= 1
                 month += 12
-        day = min(calendar.monthrange(year, month)[1],
-                  self.day or other.day)
+        if (self.day is None and (self.months or self.years)
+                and other.day == calendar.monthrange(other.year,
+                                                     other.month)[1]):
+            # When shifting by whole months or years from the last day of
+            # a month, land on the last day of the target month, so that
+            # month-end stays aligned to month-end instead of drifting
+            # off it or overflowing into the following month.
+            day = calendar.monthrange(year, month)[1]
+        else:
+            day = min(calendar.monthrange(year, month)[1],
+                      self.day or other.day)
         repl = {"year": year, "month": month, "day": day}
         for attr in ["hour", "minute", "second", "microsecond"]:
             value = getattr(self, attr)
@@ -399,6 +454,19 @@ class relativedelta(object):
                 jumpdays += (ret.weekday() - weekday) % 7
                 jumpdays *= -1
             ret += datetime.timedelta(days=jumpdays)
+        if (isinstance(ret, datetime.datetime) and ret.tzinfo is not None
+                and ret.utcoffset() is not None):
+            # Wall-clock arithmetic across a UTC offset change (e.g. a DST
+            # transition) may land on a local time that does not exist.
+            # That is an invalid combination, so raise rather than return
+            # an approximate value.
+            from dateutil.tz import datetime_exists
+            if not datetime_exists(ret):
+                raise ValueError(
+                    "The resulting wall time {ret} does not exist in time "
+                    "zone {tz} (it falls in a UTC offset transition "
+                    "gap)".format(ret=ret.replace(tzinfo=None),
+                                  tz=ret.tzinfo))
         return ret
 
     def __radd__(self, other):

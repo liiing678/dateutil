@@ -1,0 +1,9 @@
+Fixed ``relativedelta`` arithmetic for reminders expressed in relative
+terms: adding whole months or years to the last day of a month now stays
+aligned to the last day of the target month instead of drifting off
+month-end or overflowing into the following month; arithmetic on
+timezone-aware datetimes now preserves the wall clock time across UTC
+offset changes and raises ``ValueError`` when the result would be an
+imaginary (nonexistent) local time; invalid absolute arguments such as
+``month=0`` or ``day=32`` now raise ``ValueError`` instead of being
+silently ignored or clamped to an approximate value.
